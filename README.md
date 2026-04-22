@@ -30,6 +30,13 @@ pip install torch
 python keepbusy.py [options]
 ```
 
+To run under a disguised process name (defaults to `python3`, override with `KB_PROC_NAME`):
+
+```bash
+python run.py [options]
+KB_PROC_NAME=worker python run.py [options]
+```
+
 ### Options
 
 | Option | Default | Description |
@@ -63,7 +70,7 @@ python keepbusy.py --disable-auto-interrupt
 1. **Monitor stage**: Polls GPU utilization at regular intervals
 2. **Idle detection**: When all GPUs fall below the utilization threshold, a timer starts
 3. **Keepbusy stage**: After sustained idleness, a synthetic neural network training loop runs
-4. **Auto-yield**: If other GPU processes appear (2+ compute PIDs), returns to monitor stage
+4. **Auto-yield**: If other GPU processes appear (2+ compute PIDs), returns to monitor stage and releases CUDA cached memory so other jobs don't OOM
 
 ## Stopping
 

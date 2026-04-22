@@ -1,4 +1,5 @@
 import argparse
+import gc
 import os
 import signal
 import subprocess
@@ -163,6 +164,15 @@ def build_model(scale: int):
     return model
 
 
+def _empty_cuda_cache() -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+    log(">>> released GPU memory back to the driver")
+
+
 def keepbusy(args) -> str:
     global _interrupt_requested
 
@@ -177,29 +187,35 @@ def keepbusy(args) -> str:
         dtype=torch.long,
         device="cuda",
     )
+    output = None
+    loss = None
 
     log(f">>> keepbusy started on {torch.cuda.device_count()} GPU(s)")
 
-    while True:
-        if _interrupt_requested:
-            _interrupt_requested = False
-            log(">>> keepbusy interrupted manually, returning to monitor stage")
-            return "monitor"
-
-        if not args.disable_auto_interrupt:
-            compute_pids = get_compute_pids()
-            if len(compute_pids) >= 2:
-                log(
-                    ">>> detected at least 2 GPU compute processes "
-                    f"(pid(s): {', '.join(map(str, compute_pids))}), returning to monitor stage"
-                )
+    try:
+        while True:
+            if _interrupt_requested:
+                _interrupt_requested = False
+                log(">>> keepbusy interrupted manually, returning to monitor stage")
                 return "monitor"
 
-        output = model(data)
-        loss = F.cross_entropy(output, target)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+            if not args.disable_auto_interrupt:
+                compute_pids = get_compute_pids()
+                if len(compute_pids) >= 2:
+                    log(
+                        ">>> detected at least 2 GPU compute processes "
+                        f"(pid(s): {', '.join(map(str, compute_pids))}), returning to monitor stage"
+                    )
+                    return "monitor"
+
+            output = model(data)
+            loss = F.cross_entropy(output, target)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+    finally:
+        del output, loss, data, target, optimizer, model
+        _empty_cuda_cache()
 
 
 def monitor(args):
