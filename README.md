@@ -47,6 +47,7 @@ KB_PROC_NAME=worker python run.py [options]
 | `--scale` | 2000 | Model scale factor for the synthetic workload |
 | `--batch-size` | 6400 | Synthetic batch size used during keepbusy |
 | `--disable-auto-interrupt` | False | Keep running even if another GPU compute process appears |
+| `--gpus` | (all) | Comma-separated list of physical GPU indices to use, e.g. `0,1`. Restricts both monitoring and the synthetic workload to these GPUs. |
 
 ### Examples
 
@@ -63,6 +64,12 @@ python keepbusy.py --idle-minutes 5
 Run indefinitely, ignoring other processes:
 ```bash
 python keepbusy.py --disable-auto-interrupt
+```
+
+Use only GPUs 0 and 2:
+```bash
+python keepbusy.py --gpus 0,2
+python run.py --gpus 0,2
 ```
 
 ## How It Works

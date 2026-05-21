@@ -26,6 +26,20 @@ def log(message: str):
     print(f"[{timestamp}] {message}", flush=True)
 
 
+def parse_gpu_list(value: str) -> List[int]:
+    if value is None or value == "":
+        return []
+    try:
+        gpus = [int(x.strip()) for x in value.split(",") if x.strip() != ""]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"--gpus expects a comma-separated list of integers, got {value!r}"
+        ) from exc
+    if any(g < 0 for g in gpus):
+        raise argparse.ArgumentTypeError("GPU indices must be non-negative")
+    return gpus
+
+
 def handle_signal(signum, _frame):
     global _interrupt_requested
     _interrupt_requested = True
@@ -99,6 +113,13 @@ def parse_args():
         action="store_true",
         help="Keep running even if another GPU compute process appears.",
     )
+    parser.add_argument(
+        "--gpus",
+        type=parse_gpu_list,
+        default=[],
+        help="Comma-separated list of physical GPU indices to use (e.g. '0,1'). "
+             "Default: all visible GPUs.",
+    )
     return parser.parse_args()
 
 
@@ -108,11 +129,18 @@ def ensure_cuda():
         sys.exit(1)
 
 
-def run_nvidia_smi(query: str) -> List[str]:
+def _id_arg(gpu_ids: List[int]) -> List[str]:
+    if not gpu_ids:
+        return []
+    return [f"--id={','.join(str(g) for g in gpu_ids)}"]
+
+
+def run_nvidia_smi(query: str, gpu_ids: List[int]) -> List[str]:
     command = [
         "nvidia-smi",
         f"--query-gpu={query}",
         "--format=csv,noheader,nounits",
+        *_id_arg(gpu_ids),
     ]
     result = subprocess.run(
         command,
@@ -123,16 +151,17 @@ def run_nvidia_smi(query: str) -> List[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def get_gpu_utilizations() -> List[float]:
-    rows = run_nvidia_smi("utilization.gpu")
+def get_gpu_utilizations(gpu_ids: List[int]) -> List[float]:
+    rows = run_nvidia_smi("utilization.gpu", gpu_ids)
     return [float(row) for row in rows]
 
 
-def get_compute_pids() -> List[int]:
+def get_compute_pids(gpu_ids: List[int]) -> List[int]:
     command = [
         "nvidia-smi",
         "--query-compute-apps=pid",
         "--format=csv,noheader,nounits",
+        *_id_arg(gpu_ids),
     ]
     result = subprocess.run(
         command,
@@ -200,7 +229,7 @@ def keepbusy(args) -> str:
                 return "monitor"
 
             if not args.disable_auto_interrupt:
-                compute_pids = get_compute_pids()
+                compute_pids = get_compute_pids(args.gpus)
                 if len(compute_pids) >= 2:
                     log(
                         ">>> detected at least 2 GPU compute processes "
@@ -235,7 +264,7 @@ def monitor(args):
             return
 
         try:
-            utilizations = get_gpu_utilizations()
+            utilizations = get_gpu_utilizations(args.gpus)
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             log(f"Failed to query GPU utilization via nvidia-smi: {exc}")
             return
@@ -269,6 +298,9 @@ def monitor(args):
 
 def main():
     args = parse_args()
+    if args.gpus:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in args.gpus)
+        log(f">>> restricting to physical GPU(s): {args.gpus}")
     ensure_cuda()
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
